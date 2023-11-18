@@ -188,6 +188,29 @@ class ApplicationConfig():
         ApplicationConfig._lock.release()
 
 
+    #
+    # has_item
+    #
+    @staticmethod
+    def has_item(name=None):
+        '''
+        Determine if an item exists
+
+        Parameters:
+            name: Name of the config item
+
+        Return Value:
+            Boolean: True if exists exists, False otherwise
+        '''
+        if not name:
+            raise ValueError("'name' argument must be supplied")
+
+        if name in ApplicationConfig._conf:
+            return True
+        
+        return False
+
+
 ###########################################################################
 #
 # Define the instance - Can be imported wherever needed:
