@@ -30,10 +30,10 @@ class ApplicationConfig():
     ''' Shared Application Config '''
     # Attributes
 
-    # Private variables
-    _lock = Lock()
-    _conf = {}
-    _conf_meta = {}
+    # Private Attributes
+    __lock = Lock()
+    __conf = {}
+    __conf_meta = {}
 
 
     #
@@ -74,20 +74,20 @@ class ApplicationConfig():
         if name in ApplicationConfig._conf and not overwrite:
             raise KeyError(f"'{name}' already exists")
 
-        ApplicationConfig._lock.acquire()
+        ApplicationConfig.__lock.acquire()
     
-        ApplicationConfig._conf[name] = {}
-        ApplicationConfig._conf_meta[name] = {}
+        ApplicationConfig.__conf[name] = {}
+        ApplicationConfig.__conf_meta[name] = {}
 
-        ApplicationConfig._conf_meta[name]["by_reference"] = by_reference
-        ApplicationConfig._conf_meta[name]["constant"] = constant
+        ApplicationConfig.__conf_meta[name]["by_reference"] = by_reference
+        ApplicationConfig.__conf_meta[name]["constant"] = constant
 
         if by_reference:
-            ApplicationConfig._conf[name] = value
+            ApplicationConfig.__conf[name] = value
         else:
-            ApplicationConfig._conf[name] = copy.deepcopy(value)
+            ApplicationConfig.__conf[name] = copy.deepcopy(value)
 
-        ApplicationConfig._lock.release()
+        ApplicationConfig.__lock.release()
 
 
     #
@@ -107,16 +107,16 @@ class ApplicationConfig():
         if not name:
             raise ValueError("'name' argument must be supplied")
 
-        if name in ApplicationConfig._conf_meta:
-            by_reference = ApplicationConfig._conf_meta[name]["by_reference"]
+        if name in ApplicationConfig.__conf_meta:
+            by_reference = ApplicationConfig.__conf_meta[name]["by_reference"]
         else:
             by_reference = True
 
-        if name in ApplicationConfig._conf:
+        if name in ApplicationConfig.__conf:
             if by_reference:
-                return ApplicationConfig._conf[name]
+                return ApplicationConfig.__conf[name]
             else:
-                return copy.deepcopy(ApplicationConfig._conf[name])
+                return copy.deepcopy(ApplicationConfig.__conf[name])
         
         return None
 
@@ -143,19 +143,19 @@ class ApplicationConfig():
         if not name:
             raise ValueError("'name' argument must be supplied")
 
-        if name in ApplicationConfig._conf_meta:
-            by_reference = ApplicationConfig._conf_meta[name]["by_reference"]
-            if ApplicationConfig._conf_meta[name]["constant"]:
+        if name in ApplicationConfig.__conf_meta:
+            by_reference = ApplicationConfig.__conf_meta[name]["by_reference"]
+            if ApplicationConfig.__conf_meta[name]["constant"]:
                 raise TypeError(f"'{name}' is defined as a constant")
     
-        ApplicationConfig._lock.acquire()
+        ApplicationConfig.__lock.acquire()
 
         if by_reference:
-            ApplicationConfig._conf[name] = value
+            ApplicationConfig.__conf[name] = value
         else:
-            ApplicationConfig._conf[name] = copy.deepcopy(value)
+            ApplicationConfig.__conf[name] = copy.deepcopy(value)
 
-        ApplicationConfig._lock.release()
+        ApplicationConfig.__lock.release()
 
 
     #
@@ -179,13 +179,13 @@ class ApplicationConfig():
             raise KeyError(f"'{name}' item  not exist")
 
         # Delete the item
-        ApplicationConfig._lock.acquire()
+        ApplicationConfig.__lock.acquire()
 
-        del ApplicationConfig._conf[name]
-        if name in ApplicationConfig._conf_meta:
-            del ApplicationConfig._conf_meta[name]
+        del ApplicationConfig.__conf[name]
+        if name in ApplicationConfig.__conf_meta:
+            del ApplicationConfig.__conf_meta[name]
 
-        ApplicationConfig._lock.release()
+        ApplicationConfig.__lock.release()
 
 
     #
@@ -205,7 +205,7 @@ class ApplicationConfig():
         if not name:
             raise ValueError("'name' argument must be supplied")
 
-        if name in ApplicationConfig._conf:
+        if name in ApplicationConfig.__conf:
             return True
         
         return False
