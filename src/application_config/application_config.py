@@ -41,9 +41,9 @@ class ApplicationConfig():
     #
     # __init__
     #
-    def __init__(self, *arg, **kwargs):
+    def __init__(self, *args, **kwargs):
         ''' Init method for class '''
-        super().__init__(*arg, **kwargs)
+        super().__init__(*args, **kwargs)
 
 
     ###########################################################################
