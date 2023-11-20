@@ -11,6 +11,7 @@
 '''
 from threading import Lock
 import copy
+import os
 
 
 #
@@ -32,6 +33,7 @@ class ApplicationConfig():
 
     # Private Attributes
     __lock = Lock()
+    __lock_env = Lock()
     __conf = {}
     __conf_meta = {}
 
@@ -112,6 +114,7 @@ class ApplicationConfig():
         else:
             by_reference = True
 
+        # Is it a name in our Config?
         if name in ApplicationConfig.__conf:
             if by_reference:
                 return ApplicationConfig.__conf[name]
@@ -176,7 +179,7 @@ class ApplicationConfig():
             raise ValueError("'name' argument must be supplied")
 
         if not name in ApplicationConfig._conf:
-            raise KeyError(f"'{name}' item  not exist")
+            raise KeyError(f"'{name}' item does not exist")
 
         # Delete the item
         ApplicationConfig.__lock.acquire()
@@ -206,6 +209,106 @@ class ApplicationConfig():
             raise ValueError("'name' argument must be supplied")
 
         if name in ApplicationConfig.__conf:
+            return True
+        
+        return False
+
+
+    ###########################################################################
+    #
+    # Access methods for Environment Variables
+    #
+    ###########################################################################
+    #
+    # getenv
+    #
+    @staticmethod
+    def getenv(name=None):
+        '''
+        Get an environment variable
+
+        Parameters:
+            name: Name of the environment variable
+
+        Return Value:
+            The environment variable value or None
+        '''
+        if not name:
+            raise ValueError("'name' argument must be supplied")
+
+        return os.getenv(name)
+
+
+    #
+    # set
+    #
+    @staticmethod
+    def setenv(name=None, value=None):
+        '''
+        Set an environment variable
+
+        Parameters:
+            name: Name of the environment variable
+            value: The environment variable value
+
+        Return Value:
+            None
+        '''
+        if not name:
+            raise ValueError("'name' argument must be supplied")
+
+        if not value:
+            raise ValueError("'value' argument must be supplied")
+
+        ApplicationConfig.__lock_env.acquire()
+        os.environ[name] = value
+        ApplicationConfig.__lock_env.release()
+
+
+    #
+    # delete
+    #
+    @staticmethod
+    def delete_env(name=None):
+        '''
+        Delete an environment variable
+
+        Parameters:
+            name: Name of the environment variable to be deleted
+
+        Return Value:
+            None
+        '''
+        if not name:
+            raise ValueError("'name' argument must be supplied")
+
+        if not name in os.environ:
+            raise KeyError(f"'{name}' environment variable does not exist")
+
+        # Delete the item
+        ApplicationConfig.__lock_env.acquire()
+        del os.environ[name]
+        ApplicationConfig.__lock_env.release()
+
+
+    #
+    # env_has_item
+    #
+    @staticmethod
+    def env_has_item(name=None):
+        '''
+        Determine if an environment variable exists
+
+        Parameters:
+            name: Name of the environment variable
+
+        Return Value:
+            Boolean: True if exists exists, False otherwise
+        '''
+        if not name:
+            raise ValueError("'name' argument must be supplied")
+
+        if name in os.environ:
             return True
         
         return False
