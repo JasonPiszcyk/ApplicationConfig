@@ -96,12 +96,13 @@ class ApplicationConfig():
     # get
     #
     @staticmethod
-    def get(name=None):
+    def get(name=None, default=None):
         '''
         Get a config item
 
         Parameters:
             name: Name of the config item
+            default: The default value to use if the item doesn't exist
 
         Return Value:
             The config item value
@@ -121,7 +122,7 @@ class ApplicationConfig():
             else:
                 return copy.deepcopy(ApplicationConfig.__conf[name])
         
-        return None
+        return default
 
 
     #
@@ -223,12 +224,13 @@ class ApplicationConfig():
     # getenv
     #
     @staticmethod
-    def getenv(name=None):
+    def getenv(name=None, default=None):
         '''
         Get an environment variable
 
         Parameters:
             name: Name of the environment variable
+            default: The default value to use if the item doesn't exist
 
         Return Value:
             The environment variable value or None
@@ -236,7 +238,7 @@ class ApplicationConfig():
         if not name:
             raise ValueError("'name' argument must be supplied")
 
-        return os.getenv(name)
+        return os.getenv(name, default=default)
 
 
     #
