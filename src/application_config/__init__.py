@@ -9,5 +9,7 @@
 * Module initialisation
 *
 '''
-from .application_config import ApplicationConfig as ApplicationConfig
-from .application_config import Config as Config
+__all__ = [ "ApplicationConfig", "Config" ]
+
+from .application_config import ApplicationConfig
+from .application_config import Config
