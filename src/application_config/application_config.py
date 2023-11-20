@@ -73,7 +73,7 @@ class ApplicationConfig():
         if not name:
             raise ValueError("'name' argument must be supplied")
 
-        if name in ApplicationConfig._conf and not overwrite:
+        if name in ApplicationConfig.__conf and not overwrite:
             raise KeyError(f"'{name}' already exists")
 
         ApplicationConfig.__lock.acquire()
@@ -179,7 +179,7 @@ class ApplicationConfig():
         if not name:
             raise ValueError("'name' argument must be supplied")
 
-        if not name in ApplicationConfig._conf:
+        if not name in ApplicationConfig.__conf:
             raise KeyError(f"'{name}' item does not exist")
 
         # Delete the item
