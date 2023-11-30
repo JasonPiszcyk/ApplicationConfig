@@ -71,12 +71,12 @@ class ApplicationConfig():
         if not name:
             raise ValueError("'name' argument must be supplied")
 
-        if name in ApplicationConfig.__conf and not overwrite:
-            raise KeyError(f"'{name}' already exists")
-
         if name in ApplicationConfig.__conf_meta:
             if ApplicationConfig.__conf_meta[name]["constant"]:
                 raise TypeError(f"'{name}' is defined as a constant")
+
+        if name in ApplicationConfig.__conf and not overwrite:
+            raise KeyError(f"'{name}' already exists")
 
         ApplicationConfig.__lock.acquire()
     
