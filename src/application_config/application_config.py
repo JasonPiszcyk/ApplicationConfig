@@ -29,9 +29,7 @@ import os
 #
 class ApplicationConfig():
     ''' Shared Application Config '''
-    # Attributes
-
-    # Private Attributes
+    # Private Class Attributes
     __lock = Lock()
     __lock_env = Lock()
     __conf = {}
@@ -75,6 +73,10 @@ class ApplicationConfig():
 
         if name in ApplicationConfig.__conf and not overwrite:
             raise KeyError(f"'{name}' already exists")
+
+        if name in ApplicationConfig.__conf_meta:
+            if ApplicationConfig.__conf_meta[name]["constant"]:
+                raise TypeError(f"'{name}' is defined as a constant")
 
         ApplicationConfig.__lock.acquire()
     
