@@ -9,6 +9,7 @@
 * Application Config Info
 *
 '''
+from redis import Redis
 from threading import Lock
 import copy
 import os
@@ -17,6 +18,44 @@ import os
 #
 # Constants
 #
+
+
+###########################################################################
+#
+# ConfigMetaClass Class
+#
+###########################################################################
+#
+# ApplicationConfig
+#
+class ConfigMetaClass():
+    ''' Class to define the meta information '''
+    #
+    # __init__
+    #
+    def __init__(self, *args, backing_store="local", by_reference=True,
+                constant=False, **kwargs):
+        '''
+        Class Constructor
+
+        Parameters:
+            args: Unannamed arguments
+            backing_store: Where the vatiable is stored (local or redis)
+            by_reference: Is a copy made of the value or is stored by reference
+                (if a redis value, it is always copied)
+            constant: Is the item a constant (ie can't be changed)
+            kwargs: Named arguments.
+
+        Return Value:
+            None
+        '''
+        # Call the parent class initiator 
+        super().__init__(*args, **kwargs)
+
+        # Set the values
+        self.backing_store = backing_store
+        self.by_reference = by_reference
+        self.constant = constant
 
 
 ###########################################################################
@@ -34,14 +73,172 @@ class ApplicationConfig():
     __lock_env = Lock()
     __conf = {}
     __conf_meta = {}
+    __redis = None
 
 
     #
     # __init__
     #
     def __init__(self, *args, **kwargs):
-        ''' Init method for class '''
-        super().__init__(*args, **kwargs)
+        '''
+        Class Constructor
+
+        Parameters:
+            args: Unannamed arguments
+            kwargs: Named arguments.  Anything beginning with 'redis_' will be passed as an arg
+                to connect to Redis.  This allows the connection to Redis to be fully customised.
+                If 'redis_host' is set, an attempt will be made to connect to Redis, and redis will
+                be used as the backing store for the ApplicationConfig Module.
+
+        Return Value:
+            None
+        '''
+        # Extract the args for the redis connection
+        _connect_to_redis = False
+        _redis_args = {}
+        _new_kwargs = {}
+
+        for _key, _value in kwargs.items():
+            if _key.find("redis_") == 0:
+                _new_key = _key.replace("redis_", "")
+                _redis_args[_new_key] = _value
+
+                # If we have a server specified, we can connect to redis
+                if _new_key == "host": _connect_to_redis = True
+
+            else:
+                # Add this to the remaining kwargs
+                _new_kwargs[_key] = _value
+
+
+        # Overwrite certain values for our use
+        if not "port" in _redis_args: _redis_args["port"] = 6379
+        _redis_args["decode_responses"] = True
+        self.redis_kwargs = _redis_args
+
+        # Pass the remaining arguments on to parent class initiator 
+        super().__init__(*args, **_new_kwargs)
+
+        # Connect to redis if required
+        if _connect_to_redis:
+            __class__.__redis = Redis(**_redis_args)
+
+            # Try an action on redis to see if connection works
+            # Should raise an execption - if connection doesn't work
+            __class__.__redis.exists("__connection_test__")
+
+
+    ###########################################################################
+    #
+    # Access methods for Redis
+    #
+    ###########################################################################
+    #
+    # _set_redis
+    #
+    @classmethod
+    def _set_redis(cls, name=None, value=None):
+        '''
+        Set a value in redis
+
+        Parameters:
+            name: Name of the config item
+            value: The config item value
+
+        Return Value:
+            Boolean: True is successful, False Otherwise (exception will be raised)
+        '''
+        assert name
+
+        # Check the type of the value
+        if isinstance(value, str):
+            # String
+            cls.__redis.set(name, value)
+
+        else:
+            raise TypeError(f"Variable type not supported: {type(value)}")
+
+
+    #
+    # _get_redis
+    #
+    @classmethod
+    def _get_redis(cls, name=None):
+        '''
+        Get a value from redis
+
+        Parameters:
+            name: Name of the config item
+
+        Return Value:
+            value: The config item value (exception will be raised on error), None if not found
+        '''
+        assert name
+
+        _value = None
+
+        # Check if the value exists
+        if cls._has_item_redis(name=name):
+            # Check the type of the value
+            _value_type = cls.__redis.type(name)
+            if _value_type == "string":
+                # String
+                _value = cls.__redis.get(name)
+
+            else:
+                raise TypeError(f"Redis variable type not supported: {_value_type}")
+
+        return _value
+
+
+    #
+    # _delete_redis
+    #
+    @classmethod
+    def _delete_redis(cls, name=None):
+        '''
+        Delete a value from redis
+
+        Parameters:
+            name: Name of the config item
+
+        Return Value:
+            Boolean: True is successful, False Otherwise (exception will be raised)
+        '''
+        assert name
+        if not cls.__redis: raise RuntimeError("Redis connection has not been configured")
+
+        if not cls._has_item_redis(name=name):
+            raise KeyError(f"'{name}' item does not exist in Redis")
+        
+        # 'delete' should raise an exception if there is a problem
+        cls.__redis.delete(name)
+        return True
+
+
+
+    #
+    # _has_item_redis
+    #
+    @classmethod
+    def _has_item_redis(cls, name=None):
+        '''
+        Get a value in redis
+
+        Parameters:
+            name: Name of the config item
+
+        Return Value:
+            Boolean: True is item exists, False Otherwise
+        '''
+        assert name
+        if not cls.__redis: raise RuntimeError("Redis connection has not been configured")
+
+        # 'exists' returns a number and our return is boolen, so be explicit
+        if cls.__redis.exists(name):
+            return True
+        else:
+            return False
 
 
     ###########################################################################
@@ -52,9 +249,9 @@ class ApplicationConfig():
     #
     # register
     #
-    @staticmethod
-    def register(name=None, value=None, by_reference=True, overwrite=False,
-                 constant=False):
+    @classmethod
+    def register(cls, name=None, value=None, by_reference=True, overwrite=False,
+                 constant=False, backing_store="local"):
         '''
         Register complex data types to identify how to handle them
 
@@ -62,43 +259,78 @@ class ApplicationConfig():
             name: Name of the config item
             value: The config item value
             by_reference: Store a reference to the object or a deep copy
-            overwrite: Allow overwrite of existing config item
-            constant: Can the value be overwritten?
+                When backing store is redis, this is ignored (always a copy)
+            overwrite: Allow overwrite of existing config item if it exists
+            constant: Can the value be overwritten at any time?
+            backing_store: Allow the data to be store in an alternate backing store
+                Valid Values: local, redis
 
         Return Value:
-            The config item value
+            Boolean: True is successful, False Otherwise (exception will be raised)
         '''
-        if not name:
-            raise ValueError("'name' argument must be supplied")
+        assert name
 
-        if name in ApplicationConfig.__conf_meta:
-            if ApplicationConfig.__conf_meta[name]["constant"]:
+        _valid_backing_stores = ( "local", "redis" )
+        if backing_store not in _valid_backing_stores:
+            raise ValueError(f"'backing_store' must be one of {_valid_backing_stores}")
+
+        if name in cls.__conf_meta:
+            if cls.__conf_meta[name].constant:
                 raise TypeError(f"'{name}' is defined as a constant")
 
-        if name in ApplicationConfig.__conf and not overwrite:
+        if name in cls.__conf and not overwrite:
             raise KeyError(f"'{name}' already exists")
 
-        ApplicationConfig.__lock.acquire()
-    
-        ApplicationConfig.__conf[name] = {}
-        ApplicationConfig.__conf_meta[name] = {}
+        _byref = True
+        if backing_store == "redis":
+            # Variable cannot be stored by reference in Redis
+            _byref = False
 
-        ApplicationConfig.__conf_meta[name]["by_reference"] = by_reference
-        ApplicationConfig.__conf_meta[name]["constant"] = constant
+            # Store tha value in Redis
+            cls._set_redis(name=name, value=value)
 
-        if by_reference:
-            ApplicationConfig.__conf[name] = value
+        # Acquire the lock to upgrade the meta info and local variable (if necessary)
+        cls.__lock.acquire()
+        cls.__conf_meta[name] = ConfigMetaClass(backing_store=backing_store,
+                by_reference=_byref, constant=constant)
+
+        if backing_store == "local":
+            if by_reference:
+                cls.__conf[name] = value
+            else:
+                cls.__conf[name] = copy.deepcopy(value)
+
+        cls.__lock.release()
+        return True
+
+
+    #
+    # get_registration
+    #
+    @classmethod
+    def get_registration(cls, name=None):
+        '''
+        Register complex data types to identify how to handle them
+
+        Parameters:
+            name: Name of the config item
+
+        Return Value:
+            ConfigMetaClass: The registration info for the variable (None if not registered)
+        '''
+        assert name
+
+        if name in cls.__conf_meta:
+            return cls.__conf_meta[name]
         else:
-            ApplicationConfig.__conf[name] = copy.deepcopy(value)
-
-        ApplicationConfig.__lock.release()
+            return None
 
 
     #
     # get
     #
-    @staticmethod
-    def get(name=None, default=None):
+    @classmethod
+    def get(cls, name=None, default=None):
         '''
         Get a config item
 
@@ -109,29 +341,37 @@ class ApplicationConfig():
         Return Value:
             The config item value
         '''
-        if not name:
-            raise ValueError("'name' argument must be supplied")
+        assert name
 
-        if name in ApplicationConfig.__conf_meta:
-            by_reference = ApplicationConfig.__conf_meta[name]["by_reference"]
+        _conf_meta = cls.get_registration(name=name)
+
+        if _conf_meta:
+            _byref = _conf_meta.by_reference
         else:
-            by_reference = True
+            _byref = True
 
-        # Is it a name in our Config?
-        if name in ApplicationConfig.__conf:
-            if by_reference:
-                return ApplicationConfig.__conf[name]
-            else:
-                return copy.deepcopy(ApplicationConfig.__conf[name])
+        if _conf_meta and _conf_meta.backing_store == "redis":
+            # Value is stored in redis
+            _value = cls._get_redis(name=name)
+            if _value: return _value
+
+        else:
+            # Value might be in the local store
+            if name in cls.__conf:            
+                if _byref:
+                    return cls.__conf[name]
+                else:
+                    return copy.deepcopy(cls.__conf[name])
         
+        # Can't find it
         return default
 
 
     #
     # set
     #
-    @staticmethod
-    def set(name=None, value=None):
+    @classmethod
+    def set(cls, name=None, value=None):
         '''
         Set a config item
         Note - Complex data types are copied by reference
@@ -144,31 +384,40 @@ class ApplicationConfig():
         Return Value:
             None
         '''
-        by_reference = True
- 
-        if not name:
-            raise ValueError("'name' argument must be supplied")
+        assert name
 
-        if name in ApplicationConfig.__conf_meta:
-            by_reference = ApplicationConfig.__conf_meta[name]["by_reference"]
-            if ApplicationConfig.__conf_meta[name]["constant"]:
-                raise TypeError(f"'{name}' is defined as a constant")
-    
-        ApplicationConfig.__lock.acquire()
+        _conf_meta = cls.get_registration(name=name)
 
-        if by_reference:
-            ApplicationConfig.__conf[name] = value
+        if _conf_meta:
+            _byref = _conf_meta.by_reference
+
+            # Is this a constant?
+            if _conf_meta.constant: raise TypeError(f"'{name}' is defined as a constant")
+
         else:
-            ApplicationConfig.__conf[name] = copy.deepcopy(value)
+            _byref = True
 
-        ApplicationConfig.__lock.release()
+        if _conf_meta and _conf_meta.backing_store == "redis":
+            # Value is stored in redis
+            cls._set_redis(name=name, value=value)
+            return
+
+        # Value stored in the local store
+        cls.__lock.acquire()
+
+        if _byref:
+            cls.__conf[name] = value
+        else:
+            cls.__conf[name] = copy.deepcopy(value)
+
+        cls.__lock.release()
 
 
     #
     # delete
     #
-    @staticmethod
-    def delete(name=None):
+    @classmethod
+    def delete(cls, name=None):
         '''
         Delete an item
 
@@ -178,27 +427,40 @@ class ApplicationConfig():
         Return Value:
             None
         '''
-        if not name:
-            raise ValueError("'name' argument must be supplied")
+        assert name
 
-        if not name in ApplicationConfig.__conf:
-            raise KeyError(f"'{name}' item does not exist")
+        _conf_meta = cls.get_registration(name=name)
+
+        if _conf_meta and _conf_meta.backing_store == "redis":
+            # Value is stored in redis
+            if not cls._has_item_redis(name=name):
+                raise KeyError(f"'{name}' item does not exist")
+            
+            # Delete the item
+            cls._delete_redis(name=name)
+
+        else:
+            # Value should be in the local store
+            if not name in cls.__conf:
+                raise KeyError(f"'{name}' item does not exist")
 
         # Delete the item
-        ApplicationConfig.__lock.acquire()
+        cls.__lock.acquire()
 
-        del ApplicationConfig.__conf[name]
-        if name in ApplicationConfig.__conf_meta:
-            del ApplicationConfig.__conf_meta[name]
+        if not _conf_meta or _conf_meta.backing_store == "local":
+            del cls.__conf[name]
 
-        ApplicationConfig.__lock.release()
+        if name in cls.__conf_meta:
+            del cls.__conf_meta[name]
+
+        cls.__lock.release()
 
 
     #
     # has_item
     #
-    @staticmethod
-    def has_item(name=None):
+    @classmethod
+    def has_item(cls, name=None):
         '''
         Determine if an item exists
 
@@ -208,10 +470,15 @@ class ApplicationConfig():
         Return Value:
             Boolean: True if exists exists, False otherwise
         '''
-        if not name:
-            raise ValueError("'name' argument must be supplied")
+        assert name
 
-        if name in ApplicationConfig.__conf:
+        _conf_meta = cls.get_registration(name=name)
+
+        if _conf_meta and _conf_meta.backing_store == "redis":
+            # Value is stored in redis
+            return cls._has_item_redis(name=name)
+        
+        if name in cls.__conf:
             return True
         
         return False
@@ -225,8 +492,8 @@ class ApplicationConfig():
     #
     # getenv
     #
-    @staticmethod
-    def getenv(name=None, default=None):
+    @classmethod
+    def getenv(cls, name=None, default=None):
         '''
         Get an environment variable
 
@@ -237,17 +504,21 @@ class ApplicationConfig():
         Return Value:
             The environment variable value or None
         '''
-        if not name:
-            raise ValueError("'name' argument must be supplied")
+        assert name
 
         return os.getenv(name, default=default)
 
 
     #
+    # get_env - alias for getenv
+    #
+    get_env = getenv
+
+    #
     # set
     #
-    @staticmethod
-    def setenv(name=None, value=None):
+    @classmethod
+    def setenv(cls, name=None, value=None):
         '''
         Set an environment variable
 
@@ -258,22 +529,27 @@ class ApplicationConfig():
         Return Value:
             None
         '''
-        if not name:
-            raise ValueError("'name' argument must be supplied")
+        assert name
 
         if not value:
             raise ValueError("'value' argument must be supplied")
 
-        ApplicationConfig.__lock_env.acquire()
+        cls.__lock_env.acquire()
         os.environ[name] = value
-        ApplicationConfig.__lock_env.release()
+        cls.__lock_env.release()
+
+
+    #
+    # set_env - alias for setenv
+    #
+    set_env = setenv
 
 
     #
     # delete
     #
-    @staticmethod
-    def delete_env(name=None):
+    @classmethod
+    def delete_env(cls, name=None):
         '''
         Delete an environment variable
 
@@ -283,23 +559,22 @@ class ApplicationConfig():
         Return Value:
             None
         '''
-        if not name:
-            raise ValueError("'name' argument must be supplied")
+        assert name
 
         if not name in os.environ:
             raise KeyError(f"'{name}' environment variable does not exist")
 
         # Delete the item
-        ApplicationConfig.__lock_env.acquire()
+        cls.__lock_env.acquire()
         del os.environ[name]
-        ApplicationConfig.__lock_env.release()
+        cls.__lock_env.release()
 
 
     #
     # env_has_item
     #
-    @staticmethod
-    def env_has_item(name=None):
+    @classmethod
+    def env_has_item(cls, name=None):
         '''
         Determine if an environment variable exists
 
@@ -309,8 +584,7 @@ class ApplicationConfig():
         Return Value:
             Boolean: True if exists exists, False otherwise
         '''
-        if not name:
-            raise ValueError("'name' argument must be supplied")
+        assert name
 
         if name in os.environ:
             return True

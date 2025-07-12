@@ -11,84 +11,278 @@
 '''
 import pytest
 
-from application_config import Config
-
-
 ###########################################################################
 #
-# Start the tests...
+# The tests...
 #
 ###########################################################################
-def test_app_cfg():
-    # def register(name=None, value=None, by_reference=True, overwrite=False,
-    #              constant=False):
-    
-    # Make sure our variables don't exist
-    assert not Config.has_item("MADE_UP_ITEM")
-    assert not Config.has_item("MADE_UP_CONSTANT")
+#
+# Status
+#
+class TestAppConfig():
+    #
+    # Basic Tests to perform on an item
+    #
+    def _item_set(self, name="", value=None):
+        assert name
+        _default_value = "__default_value_set_by_item_set__"
 
-    assert Config.get("MADE_UP_ITEM") is None
-    assert Config.get("MADE_UP_ITEM", "a value") == "a value"
+        # Set the item value
+        pytest.appconfig.set(name=name, value=value)
 
-    # Register a constant and try to overwrite it
-    Config.register("MADE_UP_CONSTANT", 12, constant=True)
-    with pytest.raises(TypeError):
-        Config.register("MADE_UP_CONSTANT", 1)
-
-    with pytest.raises(TypeError):
-        Config.register("MADE_UP_CONSTANT", 1, overwrite=True)
-
-    with pytest.raises(TypeError):
-        Config.set("MADE_UP_CONSTANT", 1)
-
-    assert Config.get("MADE_UP_CONSTANT") == 12
-    assert Config.get("MADE_UP_CONSTANT", "a value") == 12
-
-    # Create our variable
-    Config.set("MADE_UP_ITEM", "first value")
-    assert Config.has_item("MADE_UP_ITEM")
-    assert Config.get("MADE_UP_ITEM", "a value") == "first value"
-
-    # Re register the item
-    with pytest.raises(KeyError):
-        Config.register("MADE_UP_ITEM", "Second Value")
-    
-    Config.register("MADE_UP_ITEM", "Second Value", overwrite=True)
-    assert Config.get("MADE_UP_ITEM", "a value") == "Second Value"
-
-    # Change the value
-    Config.set("MADE_UP_ITEM", "Third Value")
-    assert Config.get("MADE_UP_ITEM", "a value") == "Third Value"
-
-    # Delete the items
-    Config.delete("MADE_UP_ITEM")
-    Config.delete("MADE_UP_CONSTANT")
-    assert not Config.has_item("MADE_UP_ITEM")
-    assert not Config.has_item("MADE_UP_CONSTANT")
+        # Do a get to make sure it is ok
+        self._item_get(name=name, value=value, default_value=_default_value)
 
 
-def test_env_vars():
-    # Make sure we can get the home variable
-    home = Config.getenv('HOME')
-    assert home is not None
+    def _item_get(self, name="", value=None, default_value=None):
+        assert name
+        if not default_value: default_value = "__default_value_set_by_item_get__"
 
-    # Get a non-existant env Variable
-    assert not Config.env_has_item('MADE_UP_ENV_VARIABLE')
-    val = Config.getenv('MADE_UP_ENV_VARIABLE')
-    assert val is None
-    val = Config.getenv('MADE_UP_ENV_VARIABLE', "default_value")
-    assert val == "default_value"
+        # Check it exists
+        assert pytest.appconfig.has_item(name=name)
 
-    # Set our value
-    Config.setenv('MADE_UP_ENV_VARIABLE', "new_value")
-    assert Config.env_has_item('MADE_UP_ENV_VARIABLE')
-    val = Config.getenv('MADE_UP_ENV_VARIABLE')
-    assert val == "new_value"
+        # Get the value with a default and make sure we get the value we set
+        assert pytest.appconfig.get(name=name, default=default_value) == value
 
-    # Delete our value
-    val = Config.delete_env('MADE_UP_ENV_VARIABLE')
-    assert not Config.env_has_item('MADE_UP_ENV_VARIABLE')
-    val = Config.getenv('MADE_UP_ENV_VARIABLE')
-    assert val is None
-    val = Config.getenv('MADE_UP_ENV_VARIABLE', "default_value")
-    assert val == "default_value"
+        # Get the value without a default and make sure we get the value we set
+        assert pytest.appconfig.get(name=name) == value
+
+
+    def _item_missing_get(self, name="", default_value=None):
+        assert name
+        if not default_value: default_value = "__default_value_set_by_item_missing_set__"
+
+        # Check if it exists
+        assert not pytest.appconfig.has_item(name=name)
+
+        # Get the value with a default and make sure we get the default
+        assert pytest.appconfig.get(name=name, default=default_value) == default_value
+
+        # Get the value without a default and make sure we get None
+        assert not pytest.appconfig.get(name=name)
+
+
+    def _item_delete(self, name=""):
+        assert name
+        _default_value = "__default_value_set_by_item_delete__"
+
+        # Delete the Item
+        pytest.appconfig.delete(name=name)
+
+        # Check the item has gone
+        self._item_missing_get(name=name, default_value=_default_value)
+
+
+    #
+    # Basic config items
+    #
+    def test_basic_config_item(self):
+        _var_name = "basic_var"
+        _var_value = "basic_string"
+        _var_default = "default_basic_string"
+
+        # Make sure the value doesn't exist
+        assert not pytest.appconfig.has_item(_var_name)
+
+        # Try to get the value (checking that we get the default)
+        self._item_missing_get(name=_var_name, default_value=_var_default)
+
+        # Set the value (will also get the value to confirm)
+        self._item_set(name=_var_name, value=_var_value)
+
+        # Delete the Item
+        self._item_delete(name=_var_name)
+
+
+    #
+    # Registered Items (Locally stored)
+    #
+    def test_local_registered_item(self):
+        _var_name = "registered_var"
+        _var_value = "registered_string"
+        _var_new_value = "registered_string_new_value"
+        _var_default = "default_registered_string"
+
+        # Make sure the value doesn't exist
+        assert not pytest.appconfig.has_item(_var_name)
+
+        # Try to get the value (checking that we get the default)
+        self._item_missing_get(name=_var_name, default_value=_var_default)
+
+        # Register the value
+        pytest.appconfig.register(name=_var_name, value=_var_value, by_reference=True,
+                overwrite=False, constant=False, backing_store="local")
+
+        # Check the value
+        self._item_get(name=_var_name, value=_var_value, default_value=_var_default)
+
+        # Change the value
+        self._item_set(name=_var_name, value=_var_new_value)
+
+        # Check the value has been changed
+        self._item_get(name=_var_name, value=_var_new_value, default_value=_var_default)
+
+        # Delete the Item
+        self._item_delete(name=_var_name)
+
+
+    def test_local_registered_item_twice(self):
+        _var_name = "duplicate_registered_var"
+        _var_value = "duplicate_registered_string"
+        _var_default = "duplicate_default_registered_string"
+
+        # Make sure the value doesn't exist
+        assert not pytest.appconfig.has_item(_var_name)
+
+        # Try to get the value (checking that we get the default)
+        self._item_missing_get(name=_var_name, default_value=_var_default)
+
+        # Register the value
+        pytest.appconfig.register(name=_var_name, value=_var_value, by_reference=True,
+                overwrite=False, constant=False, backing_store="local")
+
+        # Check the value
+        self._item_get(name=_var_name, value=_var_value, default_value=_var_default)
+
+        # Try to register the item again
+        with pytest.raises(KeyError, match=pytest.EXCEPTION_MATCH_EXISTS):
+            pytest.appconfig.register(name=_var_name, value=_var_value, by_reference=True,
+                    overwrite=False, constant=False, backing_store="local")
+
+        # Delete the Item
+        self._item_delete(name=_var_name)
+
+
+    def test_local_registered_item_overwrite(self):
+        _var_name = "overwrite_registered_var"
+        _var_value = "overwrite_registered_string"
+        _var_new_value = "overwrite_registered_string_new_value"
+        _var_default = "overwrite_default_registered_string"
+
+        # Make sure the value doesn't exist
+        assert not pytest.appconfig.has_item(_var_name)
+
+        # Try to get the value (checking that we get the default)
+        self._item_missing_get(name=_var_name, default_value=_var_default)
+
+        # Register the value
+        pytest.appconfig.register(name=_var_name, value=_var_value, by_reference=True,
+                overwrite=False, constant=False, backing_store="local")
+
+        # Check the value
+        self._item_get(name=_var_name, value=_var_value, default_value=_var_default)
+
+        # Try to register the item again - Should work as overwrite = true
+        pytest.appconfig.register(name=_var_name, value=_var_new_value, by_reference=True,
+                overwrite=True, constant=False, backing_store="local")
+
+        # Check the new value
+        self._item_get(name=_var_name, value=_var_new_value, default_value=_var_default)
+
+        # Delete the Item
+        self._item_delete(name=_var_name)
+
+
+    def test_local_registered_constant(self):
+        _var_name = "registered_constant"
+        _var_value = "registered_constant_string"
+        _var_new_value = "registered_constant_string_new_value"
+        _var_default = "default_registered_constant_string"
+
+        # Make sure the constant doesn't exist
+        assert not pytest.appconfig.has_item(_var_name)
+
+        # Try to get the value (checking that we get the default)
+        self._item_missing_get(name=_var_name, default_value=_var_default)
+
+        # Register the value
+        pytest.appconfig.register(name=_var_name, value=_var_value, by_reference=True,
+                overwrite=False, constant=True, backing_store="local")
+
+        # Check the value
+        self._item_get(name=_var_name, value=_var_value, default_value=_var_default)
+
+        # Change the value
+        with pytest.raises(TypeError, match=pytest.EXCEPTION_MATCH_CONSTANT):
+            self._item_set(name=_var_name, value=_var_new_value)
+
+        # Check the value has NOT been changed
+        self._item_get(name=_var_name, value=_var_value, default_value=_var_default)
+
+        # Delete the Item
+        self._item_delete(name=_var_name)
+
+
+
+    def test_local_registered_item_byref_true(self):
+        _var_name = "byref_true_registered_var"
+        _var_value = "byref_true_registered_string"
+        _var_new_value = "byref_true_registered_string_new_value"
+        _var_default = "byref_true_default_registered_string"
+
+        _var_dict = { "value": _var_value }
+
+        # Make sure the value doesn't exist
+        assert not pytest.appconfig.has_item(_var_name)
+
+        # Try to get the value (checking that we get the default)
+        self._item_missing_get(name=_var_name, default_value=_var_default)
+
+        # Register the value
+        pytest.appconfig.register(name=_var_name, value=_var_dict, by_reference=True,
+                overwrite=False, constant=False, backing_store="local")
+
+        # Check the value
+        _val = pytest.appconfig.get(name=_var_name)
+        assert _val
+        assert "value" in _val
+        assert _val['value'] == _var_value
+
+        # Change the value in the local variable (should be stored as a reference)
+        _var_dict["value"] = _var_new_value
+
+        # Check the value has been changed
+        _val = pytest.appconfig.get(name=_var_name)
+        assert _val
+        assert "value" in _val
+        assert _val['value'] == _var_new_value
+
+        # Delete the Item
+        self._item_delete(name=_var_name)
+
+
+    def test_local_registered_item_byref_false(self):
+        _var_name = "byref_false_registered_var"
+        _var_value = "byref_false_registered_string"
+        _var_new_value = "byref_false_registered_string_new_value"
+        _var_default = "byref_false_default_registered_string"
+
+        _var_dict = { "value": _var_value }
+
+        # Make sure the value doesn't exist
+        assert not pytest.appconfig.has_item(_var_name)
+
+        # Try to get the value (checking that we get the default)
+        self._item_missing_get(name=_var_name, default_value=_var_default)
+
+        # Register the value
+        pytest.appconfig.register(name=_var_name, value=_var_dict, by_reference=False,
+                overwrite=False, constant=False, backing_store="local")
+
+        # Check the value
+        _val = pytest.appconfig.get(name=_var_name)
+        assert _val
+        assert "value" in _val
+        assert _val['value'] == _var_value
+
+        # Change the value in the local variable (should be stored as a copy)
+        _var_dict["value"] = _var_new_value
+
+        # Check the value has NOT been changed
+        _val = pytest.appconfig.get(name=_var_name)
+        assert _val
+        assert "value" in _val
+        assert _val['value'] == _var_value
+
+        # Delete the Item
+        self._item_delete(name=_var_name)
