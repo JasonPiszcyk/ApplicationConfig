@@ -110,12 +110,6 @@ class ApplicationConfig():
                 # Add this to the remaining kwargs
                 _new_kwargs[_key] = _value
 
-
-        # Overwrite certain values for our use
-        if not "port" in _redis_args: _redis_args["port"] = 6379
-        _redis_args["decode_responses"] = True
-        self.redis_kwargs = _redis_args
-
         # Pass the remaining arguments on to parent class initiator 
         super().__init__(*args, **_new_kwargs)
 
@@ -138,6 +132,10 @@ class ApplicationConfig():
         Return Value:
             None
         '''
+        # Overwrite certain values for our use
+        if not "port" in kwargs: kwargs["port"] = 6379
+        kwargs["decode_responses"] = True
+
         cls.__redis = Redis(**kwargs)
 
         # Try an action on redis to see if connection works
