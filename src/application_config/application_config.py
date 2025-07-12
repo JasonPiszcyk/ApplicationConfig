@@ -121,11 +121,28 @@ class ApplicationConfig():
 
         # Connect to redis if required
         if _connect_to_redis:
-            __class__.__redis = Redis(**_redis_args)
+            self._init_redis(**_redis_args)
 
-            # Try an action on redis to see if connection works
-            # Should raise an execption - if connection doesn't work
-            __class__.__redis.exists("__connection_test__")
+
+    #
+    # _init_redis
+    #
+    @classmethod
+    def _init_redis(cls, **kwargs):
+        '''
+        Initialise the connection to Redis
+
+        Parameters:
+            kwargs: Named arguments - Passed directly to Redis
+
+        Return Value:
+            None
+        '''
+        cls.__redis = Redis(**kwargs)
+
+        # Try an action on redis to see if connection works
+        # Should raise an exception if connection doesn't work
+        cls.__redis.exists("__connection_test__")
 
 
     ###########################################################################
