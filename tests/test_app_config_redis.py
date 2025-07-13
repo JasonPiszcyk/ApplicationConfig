@@ -10,6 +10,7 @@
 *
 '''
 import pytest
+import time
 
 ###########################################################################
 #
@@ -124,3 +125,25 @@ class TestAppConfigRedis():
 
         # Delete the Item
         self._redis_delete(redis_config, name=_var_name)
+
+    def test_redis_registered_item_expiry(self, redis_config):
+        _var_name = "redis_expiry_registered_var"
+        _var_value = "redis_expiry_registered_string"
+        _var_default = "redis_expiry_default_registered_string"
+        _timeout = 2
+
+        # Make sure the value doesn't exist
+        assert not pytest.appconfig.has_item(_var_name)
+
+        # Register the value
+        pytest.appconfig.register(name=_var_name, value=_var_value, by_reference=False,
+                overwrite=False, constant=False, timeout=_timeout, backing_store="redis")
+
+        # Check the value
+        self._redis_get(redis_config, name=_var_name, value=_var_value, default_value=_var_default)
+
+        # Wait for the value to expire
+        time.sleep(_timeout + 1)
+
+        # Try to get the value (checking that we get the default)
+        self._redis_missing_get(redis_config, name=_var_name, default_value=_var_default)

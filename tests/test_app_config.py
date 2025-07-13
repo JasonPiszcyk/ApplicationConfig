@@ -10,6 +10,7 @@
 *
 '''
 import pytest
+import time
 
 ###########################################################################
 #
@@ -286,3 +287,27 @@ class TestAppConfig():
 
         # Delete the Item
         self._item_delete(name=_var_name)
+
+
+    def test_local_registered_item_expiry(self):
+        _var_name = "expiry_registered_var"
+        _var_value = "expiry_registered_string"
+        _var_default = "expiry_default_registered_string"
+        _timeout = 2
+
+        # Make sure the value doesn't exist
+        assert not pytest.appconfig.has_item(_var_name)
+
+        # Register the value
+        pytest.appconfig.register(name=_var_name, value=_var_value, by_reference=False,
+                overwrite=False, constant=False, timeout=_timeout, backing_store="local")
+
+        # Check the value
+        self._item_get(name=_var_name, value=_var_value, default_value=_var_default)
+
+        # Wait for the value to expire
+        time.sleep(_timeout + 1)
+
+        # Try to get the value (checking that we get the default)
+        self._item_missing_get(name=_var_name, default_value=_var_default)
+

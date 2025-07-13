@@ -13,6 +13,7 @@ from redis import Redis
 from threading import Lock
 import copy
 import os
+from datetime import datetime, timezone
 
 
 #
@@ -25,25 +26,54 @@ import os
 # ConfigMetaClass Class
 #
 ###########################################################################
+class ConfigExpiryClass():
+    ''' Class to define the expiry information '''
+    #
+    # __init__
+    #
+    def __init__(self, *args, name="", backing_store="local", **kwargs):
+        '''
+        Class Constructor
+
+        Parameters:
+            args: Unannamed arguments
+            name: The name of the item
+            backing_store: Where the variable is stored (local or redis)
+            kwargs: Named arguments.
+
+        Return Value:
+            None
+        '''
+        # Call the parent class initiator 
+        super().__init__(*args, **kwargs)
+
+        # Set the values
+        self.name = name
+        self.backing_store = backing_store
+
+
+###########################################################################
 #
-# ApplicationConfig
+# ConfigMetaClass Class
 #
+###########################################################################
 class ConfigMetaClass():
     ''' Class to define the meta information '''
     #
     # __init__
     #
     def __init__(self, *args, backing_store="local", by_reference=True,
-                constant=False, **kwargs):
+                constant=False, timeout=0, **kwargs):
         '''
         Class Constructor
 
         Parameters:
             args: Unannamed arguments
-            backing_store: Where the vatiable is stored (local or redis)
+            backing_store: Where the variable is stored (local or redis)
             by_reference: Is a copy made of the value or is stored by reference
                 (if a redis value, it is always copied)
             constant: Is the item a constant (ie can't be changed)
+            timeout: Number of seconds before the value is expired (0 = no expiry)
             kwargs: Named arguments.
 
         Return Value:
@@ -57,15 +87,17 @@ class ConfigMetaClass():
         self.by_reference = by_reference
         self.constant = constant
 
+        if timeout >= 0:
+            self.timeout = timeout
+        else:
+            self.timeout = 0
+
 
 ###########################################################################
 #
 # ApplicationConfig Class
 #
 ###########################################################################
-#
-# ApplicationConfig
-#
 class ApplicationConfig():
     ''' Shared Application Config '''
     # Private Class Attributes
@@ -73,6 +105,7 @@ class ApplicationConfig():
     __lock_env = Lock()
     __conf = {}
     __conf_meta = {}
+    __conf_expiry = {}
     __redis = None
 
 
@@ -145,6 +178,190 @@ class ApplicationConfig():
 
     ###########################################################################
     #
+    # Helper fucntions
+    #
+    ###########################################################################
+    #
+    # __timestamp
+    #
+    @staticmethod
+    def __timestamp(offset=0):
+        '''
+        Create a timestamp (in seconds) since the epoch to now
+
+        Parameters:
+            offset: Number of seconds to offset the timestamp by
+
+        Return Value:
+            int: The number of seconds since the epoch to now, +/- offset
+        '''
+        assert isinstance(offset, int)
+
+        # Get the current time
+        _now = datetime.now(timezone.utc)
+
+        # Return the timestamp
+        return int(_now.timestamp()) + offset
+
+
+    #
+    # __item_maintenance(cls)
+    #
+    @classmethod
+    def __item_maintenance(cls):
+        '''
+        Perform maintenance on items (such as expiry)
+
+        Parameters:
+            None
+
+        Return Value:
+            None
+        '''
+        # Process the expiry list
+        _now = cls.__timestamp()
+        print(f"Maintence: Timestamp = {_now}")
+        for _key in sorted(cls.__conf_expiry.keys()):
+            # Stop processing if the timestamps are in the future
+            print(f"Maintence: Key = {_key}")
+            if _now < _key: break
+
+            if cls.__conf_expiry[_key].backing_store == "local":
+                # Remove the item from the local store
+                cls._delete_local(name=cls.__conf_expiry[_key].name)
+
+            # Delete the metadata
+            if cls.__conf_expiry[_key].name in cls.__conf_meta:
+                del cls.__conf_meta[cls.__conf_expiry[_key].name]
+
+            # Remove the expiry entry
+            cls.__lock.acquire()
+            # print(f"deleting key = {_key}")
+            del cls.__conf_expiry[_key]
+
+            cls.__lock.release()
+
+
+    ###########################################################################
+    #
+    # Access methods for local
+    #
+    ###########################################################################
+    #
+    # _set_local
+    #
+    @classmethod
+    def _set_local(cls, name=None, value=None, by_reference=True, timeout=0):
+        '''
+        Set a value locally
+
+        Parameters:
+            name: Name of the config item
+            value: The config item value
+            by_reference: Store a reference to the object or a deep copy
+            timeout: Number of seconds before the item should be deleted (0 = never)
+
+        Return Value:
+            Boolean: True is successful, False Otherwise (exception will be raised)
+        '''
+        assert name
+        assert timeout >= 0
+
+        cls.__lock.acquire()
+
+        if by_reference:
+            cls.__conf[name] = value
+        else:
+            cls.__conf[name] = copy.deepcopy(value)
+
+        # Set the expiry for the value
+        if timeout:
+            _timestamp = cls.__timestamp(offset=timeout)
+            cls.__conf_expiry[_timestamp] = ConfigExpiryClass(name=name,
+                    backing_store="local")
+
+        cls.__lock.release()
+
+
+    #
+    # _get_redis
+    #
+    @classmethod
+    def _get_local(cls, name=None, by_reference=True):
+        '''
+        Get a value from redis
+
+        Parameters:
+            name: Name of the config item
+            by_reference: Store a reference to the object or a deep copy
+
+
+        Return Value:
+            value: The config item value (exception will be raised on error), None if not found
+        '''
+        assert name
+
+        _value = None
+
+        # Get value from the local store
+        if name in cls.__conf:            
+            if by_reference:
+                _value = cls.__conf[name]
+            else:
+                _value = copy.deepcopy(cls.__conf[name])
+
+        return _value
+
+
+    #
+    # _delete_local
+    #
+    @classmethod
+    def _delete_local(cls, name=None):
+        '''
+        Delete a value from redis
+
+        Parameters:
+            name: Name of the config item
+
+        Return Value:
+            Boolean: True is successful, False Otherwise (exception will be raised)
+        '''
+        assert name
+
+        # Delete the item
+        if cls._has_item_local(name=name):
+            cls.__lock.acquire()
+            del cls.__conf[name]
+            cls.__lock.release()
+
+        return True
+
+
+    #
+    # _has_item_local
+    #
+    @classmethod
+    def _has_item_local(cls, name=None):
+        '''
+        Get a value in redis
+
+        Parameters:
+            name: Name of the config item
+
+        Return Value:
+            Boolean: True is item exists, False Otherwise
+        '''
+        assert name
+
+        if name in cls.__conf:
+            return True
+        
+        return False
+
+
+    ###########################################################################
+    #
     # Access methods for Redis
     #
     ###########################################################################
@@ -152,18 +369,20 @@ class ApplicationConfig():
     # _set_redis
     #
     @classmethod
-    def _set_redis(cls, name=None, value=None):
+    def _set_redis(cls, name=None, value=None, timeout=0):
         '''
         Set a value in redis
 
         Parameters:
             name: Name of the config item
             value: The config item value
+            timeout: Number of seconds before the item should be deleted (0 = never)
 
         Return Value:
             Boolean: True is successful, False Otherwise (exception will be raised)
         '''
         assert name
+        assert timeout >= 0
 
         # Check the type of the value
         if isinstance(value, str):
@@ -172,6 +391,18 @@ class ApplicationConfig():
 
         else:
             raise TypeError(f"Variable type not supported: {type(value)}")
+
+        # Set the expire value
+        if timeout: 
+            # Set variable expiry in Redis (Add 1 second to make sure Metadata expires first)
+            cls.__redis.expire(name, timeout + 1)
+
+            # Set metadata to xpire
+            cls.__lock.acquire()
+            _timestamp = cls.__timestamp(offset=timeout)
+            cls.__conf_expiry[_timestamp] = ConfigExpiryClass(name=name,
+                    backing_store="redis")
+            cls.__lock.release()
 
 
     #
@@ -266,7 +497,7 @@ class ApplicationConfig():
     #
     @classmethod
     def register(cls, name=None, value=None, by_reference=True, overwrite=False,
-                 constant=False, backing_store="local"):
+                 constant=False, timeout=0, backing_store="local"):
         '''
         Register complex data types to identify how to handle them
 
@@ -285,6 +516,9 @@ class ApplicationConfig():
         '''
         assert name
 
+        # Run the item maintenance
+        cls.__item_maintenance()
+
         _valid_backing_stores = ( "local", "redis" )
         if backing_store not in _valid_backing_stores:
             raise ValueError(f"'backing_store' must be one of {_valid_backing_stores}")
@@ -296,26 +530,23 @@ class ApplicationConfig():
         if name in cls.__conf and not overwrite:
             raise KeyError(f"'{name}' already exists")
 
-        _byref = True
-        if backing_store == "redis":
-            # Variable cannot be stored by reference in Redis
-            _byref = False
+        # Variable cannot be stored by reference in Redis
+        if backing_store == "redis": by_reference = False
 
-            # Store tha value in Redis
-            cls._set_redis(name=name, value=value)
-
-        # Acquire the lock to upgrade the meta info and local variable (if necessary)
+        # Update the meta info
         cls.__lock.acquire()
         cls.__conf_meta[name] = ConfigMetaClass(backing_store=backing_store,
-                by_reference=_byref, constant=constant)
-
-        if backing_store == "local":
-            if by_reference:
-                cls.__conf[name] = value
-            else:
-                cls.__conf[name] = copy.deepcopy(value)
-
+                by_reference=by_reference, constant=constant, timeout=timeout)
         cls.__lock.release()
+
+        if backing_store == "redis":
+            # Store tha value in Redis
+            cls._set_redis(name=name, value=value, timeout=timeout)
+        
+        else:
+            # Store the value locally
+            cls._set_local(name=name, value=value, by_reference=by_reference, timeout=timeout)
+
         return True
 
 
@@ -335,51 +566,13 @@ class ApplicationConfig():
         '''
         assert name
 
+        # Run the item maintenance
+        cls.__item_maintenance()
+
         if name in cls.__conf_meta:
             return cls.__conf_meta[name]
         else:
             return None
-
-
-    #
-    # get
-    #
-    @classmethod
-    def get(cls, name=None, default=None):
-        '''
-        Get a config item
-
-        Parameters:
-            name: Name of the config item
-            default: The default value to use if the item doesn't exist
-
-        Return Value:
-            The config item value
-        '''
-        assert name
-
-        _conf_meta = cls.get_registration(name=name)
-
-        if _conf_meta:
-            _byref = _conf_meta.by_reference
-        else:
-            _byref = True
-
-        if _conf_meta and _conf_meta.backing_store == "redis":
-            # Value is stored in redis
-            _value = cls._get_redis(name=name)
-            if _value: return _value
-
-        else:
-            # Value might be in the local store
-            if name in cls.__conf:            
-                if _byref:
-                    return cls.__conf[name]
-                else:
-                    return copy.deepcopy(cls.__conf[name])
-        
-        # Can't find it
-        return default
 
 
     #
@@ -401,31 +594,71 @@ class ApplicationConfig():
         '''
         assert name
 
+        # Run the item maintenance
+        cls.__item_maintenance()
+
         _conf_meta = cls.get_registration(name=name)
-
         if _conf_meta:
-            _byref = _conf_meta.by_reference
-
             # Is this a constant?
             if _conf_meta.constant: raise TypeError(f"'{name}' is defined as a constant")
 
+            _backing_store = _conf_meta.backing_store
+            _by_reference = _conf_meta.by_reference
+            _timeout = _conf_meta.timeout
         else:
-            _byref = True
+            _backing_store = "local"
+            _by_reference = True
+            _timeout = 0
 
-        if _conf_meta and _conf_meta.backing_store == "redis":
+        if _backing_store == "redis":
             # Value is stored in redis
-            cls._set_redis(name=name, value=value)
-            return
-
-        # Value stored in the local store
-        cls.__lock.acquire()
-
-        if _byref:
-            cls.__conf[name] = value
+            cls._set_redis(name=name, value=value, timeout=_timeout)
+        
         else:
-            cls.__conf[name] = copy.deepcopy(value)
+            # Value stored in the local store
+            cls._set_local(name=name, value=value, by_reference=_by_reference, timeout=_timeout)
 
-        cls.__lock.release()
+
+    #
+    # get
+    #
+    @classmethod
+    def get(cls, name=None, default=None):
+        '''
+        Get a config item
+
+        Parameters:
+            name: Name of the config item
+            default: The default value to use if the item doesn't exist
+
+        Return Value:
+            The config item value
+        '''
+        assert name
+
+        # Run the item maintenance
+        cls.__item_maintenance()
+
+        _conf_meta = cls.get_registration(name=name)
+        if _conf_meta:
+            _backing_store = _conf_meta.backing_store
+            _by_reference = _conf_meta.by_reference
+        else:
+            _backing_store = "local"
+            _by_reference = True
+
+        # Get the value
+        if _backing_store == "redis":
+            # Value is stored in redis
+            _value = cls._get_redis(name=name)
+
+        else:
+            # Value is stored locally
+            _value = cls._get_local(name=name, by_reference=_by_reference)
+        
+        # Return the defaul if value not found
+        if not _value: _value = default
+        return _value
 
 
     #
@@ -444,31 +677,27 @@ class ApplicationConfig():
         '''
         assert name
 
-        _conf_meta = cls.get_registration(name=name)
+        # Run the item maintenance
+        cls.__item_maintenance()
 
-        if _conf_meta and _conf_meta.backing_store == "redis":
+        _conf_meta = cls.get_registration(name=name)
+        if _conf_meta:
+            _backing_store = _conf_meta.backing_store
+        else:
+            _backing_store = "local"
+
+        if _backing_store == "redis":
             # Value is stored in redis
-            if not cls._has_item_redis(name=name):
-                raise KeyError(f"'{name}' item does not exist")
-            
-            # Delete the item
             cls._delete_redis(name=name)
 
         else:
-            # Value should be in the local store
-            if not name in cls.__conf:
-                raise KeyError(f"'{name}' item does not exist")
+            cls._delete_local(name=name)
 
-        # Delete the item
-        cls.__lock.acquire()
-
-        if not _conf_meta or _conf_meta.backing_store == "local":
-            del cls.__conf[name]
-
+        # Delete the item meta information if it exists
         if name in cls.__conf_meta:
+            cls.__lock.acquire()
             del cls.__conf_meta[name]
-
-        cls.__lock.release()
+            cls.__lock.release()
 
 
     #
@@ -487,16 +716,22 @@ class ApplicationConfig():
         '''
         assert name
 
-        _conf_meta = cls.get_registration(name=name)
+        # Run the item maintenance
+        cls.__item_maintenance()
 
-        if _conf_meta and _conf_meta.backing_store == "redis":
+        _conf_meta = cls.get_registration(name=name)
+        if _conf_meta:
+            _backing_store = _conf_meta.backing_store
+        else:
+            _backing_store = "local"
+
+        if _backing_store == "redis":
             # Value is stored in redis
             return cls._has_item_redis(name=name)
         
-        if name in cls.__conf:
-            return True
-        
-        return False
+        else:
+            # Value is stored locally
+            return cls._has_item_local(name=name)
 
 
     ###########################################################################
@@ -520,6 +755,9 @@ class ApplicationConfig():
             The environment variable value or None
         '''
         assert name
+
+        # Run the item maintenance
+        cls.__item_maintenance()
 
         return os.getenv(name, default=default)
 
@@ -545,6 +783,9 @@ class ApplicationConfig():
             None
         '''
         assert name
+
+        # Run the item maintenance
+        cls.__item_maintenance()
 
         if not value:
             raise ValueError("'value' argument must be supplied")
@@ -576,6 +817,9 @@ class ApplicationConfig():
         '''
         assert name
 
+        # Run the item maintenance
+        cls.__item_maintenance()
+
         if not name in os.environ:
             raise KeyError(f"'{name}' environment variable does not exist")
 
@@ -600,6 +844,9 @@ class ApplicationConfig():
             Boolean: True if exists exists, False otherwise
         '''
         assert name
+
+        # Run the item maintenance
+        cls.__item_maintenance()
 
         if name in os.environ:
             return True

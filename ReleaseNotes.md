@@ -1,6 +1,10 @@
 # ApplicationConfig
 ## Release Notes
 
+__Version 1.2.0__
+* Add - Option to expire items after a number of seconds
+
+
 __Version 1.1.2__
 * Fix - Redis params (port, decode_responses) were not being modified in _redis_init.
 
