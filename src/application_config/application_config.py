@@ -14,7 +14,9 @@ from threading import Lock
 import copy
 import os
 from datetime import datetime, timezone
+import json
 
+import crypto_tools
 
 #
 # Constants
@@ -63,7 +65,7 @@ class ConfigMetaClass():
     # __init__
     #
     def __init__(self, *args, backing_store="local", by_reference=True,
-                constant=False, timeout=0, **kwargs):
+                constant=False, encrypt=False, timeout=0, **kwargs):
         '''
         Class Constructor
 
@@ -86,6 +88,7 @@ class ConfigMetaClass():
         self.backing_store = backing_store
         self.by_reference = by_reference
         self.constant = constant
+        self.encrypt = encrypt
 
         if timeout >= 0:
             self.timeout = timeout
@@ -107,17 +110,22 @@ class ApplicationConfig():
     __conf_meta = {}
     __conf_expiry = {}
     __redis = None
+    __key = None
+
+    # Using a fixed salt so we always derive the same key from the password
+    __salt = b'a%Z\xe9\xc3N\x96\x82\xc5|#e\xfd1b&'
 
 
     #
     # __init__
     #
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, password="", **kwargs):
         '''
         Class Constructor
 
         Parameters:
             args: Unannamed arguments
+            password: A password used to derive an encryption key
             kwargs: Named arguments.  Anything beginning with 'redis_' will be passed as an arg
                 to connect to Redis.  This allows the connection to Redis to be fully customised.
                 If 'redis_host' is set, an attempt will be made to connect to Redis, and redis will
@@ -145,6 +153,11 @@ class ApplicationConfig():
 
         # Pass the remaining arguments on to parent class initiator 
         super().__init__(*args, **_new_kwargs)
+
+        # Initialise Encryption if a password was provided
+        if password:
+            _, __class__.__key = crypto_tools.fernet.derive_key(
+                    salt=__class__.__salt, password=password)
 
         # Connect to redis if required
         if _connect_to_redis:
@@ -176,9 +189,26 @@ class ApplicationConfig():
         cls.__redis.exists("__connection_test__")
 
 
+    #
+    # _init_encryption
+    #
+    @classmethod
+    def _init_encryption(cls, password=""):
+        '''
+        Initialise the encryption component
+
+        Parameters:
+            password: A password used to create the encryption key
+
+        Return Value:
+            None
+        '''
+        _, cls.__key = crypto_tools.fernet.derive_key(salt=cls.__salt, password=password)
+
+
     ###########################################################################
     #
-    # Helper fucntions
+    # Helper functions
     #
     ###########################################################################
     #
@@ -205,7 +235,7 @@ class ApplicationConfig():
 
 
     #
-    # __item_maintenance(cls)
+    # __item_maintenance
     #
     @classmethod
     def __item_maintenance(cls):
@@ -220,10 +250,8 @@ class ApplicationConfig():
         '''
         # Process the expiry list
         _now = cls.__timestamp()
-        print(f"Maintence: Timestamp = {_now}")
         for _key in sorted(cls.__conf_expiry.keys()):
             # Stop processing if the timestamps are in the future
-            print(f"Maintence: Key = {_key}")
             if _now < _key: break
 
             if cls.__conf_expiry[_key].backing_store == "local":
@@ -236,10 +264,115 @@ class ApplicationConfig():
 
             # Remove the expiry entry
             cls.__lock.acquire()
-            # print(f"deleting key = {_key}")
             del cls.__conf_expiry[_key]
 
             cls.__lock.release()
+
+
+    #
+    # to_json
+    # 
+    @staticmethod
+    def to_json(data=None):
+        '''
+        Convert the data to a JSON string
+
+        Parameters:
+            data: The data to be converted
+
+        Return Value:
+            string: JSON representation of the data
+        '''
+        if not data: return ""
+
+        # Is the data already a string?
+        if isinstance(data, str): return data
+
+        # This might fail if the data can't be formatted as JSON
+        try:
+            return json.dumps(data)
+        except:
+            return ""
+
+
+    #
+    # from_json
+    #
+    @staticmethod
+    def from_json(data=None):
+        '''
+        Convert a JSON string to python data
+
+        Parameters:
+            json_data: String containing the JSON Info
+
+        Return Value:
+            obj: The python representation of the data
+        '''
+        if not data: return None
+
+        # This will fail if the data isn't in JSON format
+        try:
+            return json.loads(data)
+        except:
+            # Error converting - If data is a string just return it
+            if isinstance(data, str):
+                return data
+            else:
+                return None
+
+
+    ###########################################################################
+    #
+    # Encryption functions
+    #
+    ###########################################################################
+    #
+    # __encrypt
+    #
+    @classmethod
+    def __encrypt(cls, data=""):
+        '''
+        Encrypt the data string
+
+        Parameters:
+            data: A string value to be encrypted
+
+        Return Value:
+            string: The encrypted string
+        '''
+        if not cls.__key: raise RuntimeError("Encryption Key has not been configured")
+
+        _encrypted_data = crypto_tools.fernet.encrypt(data=data, key=cls.__key).decode()
+
+        if not _encrypted_data:
+            return ""
+        else:
+            return _encrypted_data
+
+
+    #
+    # __decrypt
+    #
+    @classmethod
+    def __decrypt(cls, data=""):
+        '''
+        Decrypt the data string
+
+        Parameters:
+            data: A string value containing encrypted data
+
+        Return Value:
+            string: The decrypted string
+        '''
+        if not cls.__key: raise RuntimeError("Encryption Key has not been configured")
+    
+        _decrypted_data = crypto_tools.fernet.decrypt(data=data, key=cls.__key)
+
+        if not _decrypted_data:
+            return ""
+        else:
+            return _decrypted_data
 
 
     ###########################################################################
@@ -383,6 +516,7 @@ class ApplicationConfig():
         '''
         assert name
         assert timeout >= 0
+        if not cls.__redis: raise RuntimeError("Redis connection has not been configured")
 
         # Check the type of the value
         if isinstance(value, str):
@@ -420,6 +554,7 @@ class ApplicationConfig():
             value: The config item value (exception will be raised on error), None if not found
         '''
         assert name
+        if not cls.__redis: raise RuntimeError("Redis connection has not been configured")
 
         _value = None
 
@@ -497,7 +632,7 @@ class ApplicationConfig():
     #
     @classmethod
     def register(cls, name=None, value=None, by_reference=True, overwrite=False,
-                 constant=False, timeout=0, backing_store="local"):
+                 constant=False, timeout=0, encrypt=False, backing_store="local"):
         '''
         Register complex data types to identify how to handle them
 
@@ -508,6 +643,8 @@ class ApplicationConfig():
                 When backing store is redis, this is ignored (always a copy)
             overwrite: Allow overwrite of existing config item if it exists
             constant: Can the value be overwritten at any time?
+            timeout: Number of seconds before the item is deleted
+            encrypt: If true, the item is encrypted on set, and decrypted on get
             backing_store: Allow the data to be store in an alternate backing store
                 Valid Values: local, redis
 
@@ -536,8 +673,15 @@ class ApplicationConfig():
         # Update the meta info
         cls.__lock.acquire()
         cls.__conf_meta[name] = ConfigMetaClass(backing_store=backing_store,
-                by_reference=by_reference, constant=constant, timeout=timeout)
+                by_reference=by_reference, constant=constant, encrypt=encrypt,
+                timeout=timeout)
         cls.__lock.release()
+
+        if encrypt:
+            # Make sure we are dealing with a string (try to convert to JSON)
+            _json_value = cls.to_json(data=value)
+            if _json_value:
+                value = cls.__encrypt(data=_json_value)
 
         if backing_store == "redis":
             # Store tha value in Redis
@@ -605,10 +749,18 @@ class ApplicationConfig():
             _backing_store = _conf_meta.backing_store
             _by_reference = _conf_meta.by_reference
             _timeout = _conf_meta.timeout
+            _encrypt = _conf_meta.encrypt
         else:
             _backing_store = "local"
             _by_reference = True
             _timeout = 0
+            _encrypt = False
+
+        if _encrypt:
+            # Make sure we are dealing with a string (try to convert to JSON)
+            _json_value = cls.to_json(data=value)
+            if _json_value:
+                value = cls.__encrypt(data=_json_value)
 
         if _backing_store == "redis":
             # Value is stored in redis
@@ -643,9 +795,11 @@ class ApplicationConfig():
         if _conf_meta:
             _backing_store = _conf_meta.backing_store
             _by_reference = _conf_meta.by_reference
+            _encrypt = _conf_meta.encrypt
         else:
             _backing_store = "local"
             _by_reference = True
+            _encrypt = False
 
         # Get the value
         if _backing_store == "redis":
@@ -655,8 +809,15 @@ class ApplicationConfig():
         else:
             # Value is stored locally
             _value = cls._get_local(name=name, by_reference=_by_reference)
-        
-        # Return the defaul if value not found
+
+        if _encrypt:
+            if _value:
+                _decryped_data = cls.__decrypt(data=_value)
+
+                # Try to convert the value from JSON (if data is a string it will be untouched)
+                _value = cls.from_json(data=_decryped_data)
+
+        # Return the default if value not found
         if not _value: _value = default
         return _value
 

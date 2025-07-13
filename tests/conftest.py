@@ -30,7 +30,7 @@ def pytest_configure(config):
     pytest.EXCEPTION_MATCH_MISSING = "item does not exist"
     pytest.EXCEPTION_MATCH_MISSING_ENV = "environment variable does not exist"
     pytest.EXCEPTION_MATCH_MISSING_REDIS = "item does not exist in Redis"
-
+    pytest.EXCEPTION_MATCH_MISSING_KEY = "Encryption Key has not been configured"
 
 ###########################################################################
 #

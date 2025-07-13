@@ -17,6 +17,7 @@ classifiers = [
 ]
 dependencies = [
     "redis",
+    "crypto_tools @ git+https://github.com/JasonPiszcyk/CryptoTools",
 ]
 
 [project.urls]

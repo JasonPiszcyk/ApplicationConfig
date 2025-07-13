@@ -311,3 +311,37 @@ class TestAppConfig():
         # Try to get the value (checking that we get the default)
         self._item_missing_get(name=_var_name, default_value=_var_default)
 
+
+    def test_local_registered_item_encryption(self):
+        _var_name = "encrypt_registered_var"
+        _var_value = "encrypt_registered_string"
+        _var_default = "encrypt_default_registered_string"
+        _password = "password"
+
+        # Make sure the value doesn't exist
+        assert not pytest.appconfig.has_item(_var_name)
+
+        # Try to encrypt (should fail - no encyption key)
+        with pytest.raises(RuntimeError, match=pytest.EXCEPTION_MATCH_MISSING_KEY):
+            pytest.appconfig.register(name=_var_name, value=_var_value, by_reference=False,
+                    overwrite=False, constant=False, encrypt=True, backing_store="local")
+
+        # Set the encryption key
+        pytest.appconfig._init_encryption(password=_password)
+
+        # Register the value
+        pytest.appconfig.register(name=_var_name, value=_var_value, by_reference=False,
+                overwrite=False, constant=False, encrypt=True, backing_store="local")
+
+        # Check the value (Should be decrypted automatically)
+        self._item_get(name=_var_name, value=_var_value, default_value=_var_default)
+
+        # Get the raw value - Should be an encrypted string
+        _val = pytest.appconfig._get_local(name=_var_name)
+        assert _val != _var_value
+
+        # Delete the Item
+        self._item_delete(name=_var_name)
+
+        # Clear the encryption key
+        pytest.appconfig.__key = None

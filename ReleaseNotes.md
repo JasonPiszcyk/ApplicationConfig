@@ -3,6 +3,7 @@
 
 __Version 1.2.0__
 * Add - Option to expire items after a number of seconds
+* Add - Option to encrypt data when storing it
 
 
 __Version 1.1.2__
